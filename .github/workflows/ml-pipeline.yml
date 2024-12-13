@@ -9,6 +9,7 @@ on:
 jobs:
   train-and-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       matrix:
         python-version: [3.8, 3.9]
@@ -23,56 +24,72 @@ jobs:
     
     - name: Cache pip packages
       uses: actions/cache@v3
+      id: pip-cache
       with:
         path: ~/.cache/pip
         key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
         restore-keys: |
           ${{ runner.os }}-pip-
-    
-    - name: Cache MNIST dataset
-      uses: actions/cache@v3
-      with:
-        path: data
-        key: mnist-dataset-v1
-    
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pytest pytest-cov flake8
+        pip install pytest pytest-cov flake8 requests
+    
+    - name: Download MNIST dataset
+      run: |
+        mkdir -p data/MNIST/raw
+        cd data/MNIST/raw
+        
+        # Download from GitHub release assets (more reliable)
+        python -c "
+        import requests
+        import gzip
+        import shutil
+        
+        base_url = 'https://github.com/golbin/TensorFlow-MNIST/raw/master/data/'
+        files = [
+            'train-images-idx3-ubyte.gz',
+            'train-labels-idx1-ubyte.gz',
+            't10k-images-idx3-ubyte.gz',
+            't10k-labels-idx1-ubyte.gz'
+        ]
+        
+        for file in files:
+            print(f'Downloading {file}...')
+            response = requests.get(f'{base_url}{file}', stream=True)
+            with open(file, 'wb') as f:
+                shutil.copyfileobj(response.raw, f)
+            
+            # Extract .gz files
+            with gzip.open(file, 'rb') as f_in:
+                with open(file[:-3], 'wb') as f_out:
+                    shutil.copyfileobj(f_in, f_out)
+        "
     
     - name: Lint with flake8
       run: |
-        # stop the build if there are Python syntax errors or undefined names
         flake8 src/ --count --select=E9,F63,F7,F82 --show-source --statistics
-        # exit-zero treats all errors as warnings
         flake8 src/ --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
 
-    - name: Download MNIST dataset
-      run: |
-        mkdir -p data
-        python -c "
-        from torchvision import datasets
-        datasets.MNIST('data', train=True, download=True)
-        datasets.MNIST('data', train=False, download=True)
-        "
-    
     - name: Train model
       run: |
+        mkdir -p models
         python src/train.py | tee training_output.log
     
-    - name: Run tests with pytest
+    - name: Run tests
       run: |
         python -m pytest src/test_network.py -v --cov=src/ --cov-report=xml
     
-    - name: Upload coverage to Codecov
+    - name: Upload coverage
       uses: codecov/codecov-action@v3
       with:
         file: ./coverage.xml
         flags: unittests
         fail_ci_if_error: true
     
-    - name: Upload model artifacts
+    - name: Upload artifacts
       if: success()
       uses: actions/upload-artifact@v4
       with:
@@ -80,12 +97,4 @@ jobs:
         path: |
           models/best_model.pth
           training_output.log
-        retention-days: 14
-    
-    - name: Save training logs
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: training-logs-py${{ matrix.python-version }}
-        path: training_output.log
         retention-days: 14
