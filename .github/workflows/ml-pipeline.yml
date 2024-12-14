@@ -24,7 +24,7 @@ jobs:
         
     - name: Run architecture tests
       run: |
-        pytest src/test_model.py -s
+        pytest src/test_network.py -s
 
     - name: Upload training artifacts
       uses: actions/upload-artifact@v3
